@@ -122,14 +122,6 @@ EMAIL_FROM=digest@yourdomain.com
 ```bash
 uvicorn app.main:app --reload
 ```
-
-### One required database migration
-
-```sql
-ALTER TABLE jobs ADD COLUMN IF NOT EXISTS combo_key text;
-CREATE INDEX IF NOT EXISTS jobs_combo_key_idx ON jobs(combo_key);
-```
-
 ---
 
 ## Scheduling — How It Never Misses Your Time
@@ -171,6 +163,14 @@ Multiple users with different digest times all run through this same flow concur
 
 ---
 
+### One required database migration
+
+```sql
+ALTER TABLE jobs ADD COLUMN IF NOT EXISTS combo_key text;
+CREATE INDEX IF NOT EXISTS jobs_combo_key_idx ON jobs(combo_key);
+```
+
+
 ## Environment Variables
 
 | Variable | Description |
@@ -190,8 +190,3 @@ Multiple users with different digest times all run through this same flow concur
 
 MIT — free to fork and build on.
 
----
-
-<div align="center">
-  Built by <strong>Charan</strong> &nbsp;·&nbsp; <a href="https://jobfeed.site">jobfeed.site</a>
-</div>
