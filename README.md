@@ -1,13 +1,4 @@
-<div align="center">
-
-```
- ___       _     _____            _ 
-|_  |     | |   |  ___|          | |
-  | | ___ | |__ | |__ ___   ___  | |
-  | |/ _ \| '_ \|  __/ _ \ / _ \ | |
-/\  / (_) | |_) | | |  __/|  __/ |_|
-\__/ \___/|_.__/\_|  \___| \___| (_)
-```
+Job Feed
 
 **AI-powered daily job digest — personalized, scored, and delivered at exactly your time.**
 
@@ -80,19 +71,6 @@ No job boards. No scrolling. Just the top matches, ranked and delivered.
 │              └────────────────────────┘                      │
 └─────────────────────────────────────────────────────────────┘
 ```
-
-### Why API calls stay low
-
-```
-Old approach:   N users × M roles × K locations = huge call count
-                100 users × 3 roles × 2 locations = 600 calls/day
-
-JobFeed:        Collapse all users → unique (role, location, level) combos
-                Check cache per combo (6h fresh / 24h stale)
-                100 users × 3 roles × 2 locations = 6 unique combos
-                = 6–12 JSearch calls/day regardless of user count
-```
-
 ---
 
 ## 🖥️ Tech Stack
@@ -355,28 +333,6 @@ curl -X POST http://localhost:8000/cron/digest
 
 ---
 
-## 📧 Email Design
-
-The digest email mirrors the dashboard's visual identity exactly:
-
-| Element | Value |
-|---|---|
-| Background | `#0a0a0a` |
-| Card background | `#111111` |
-| Border | `1px solid #1e1e1e` |
-| Accent / header border | `2px solid #00d4ff` |
-| Font | `Courier New` (email-safe JetBrains Mono) |
-| Strong match (≥70) | `#00d4ff` cyan left-border + score badge |
-| Good match (≥40) | `#ff9d4d` orange left-border + score badge |
-| Weak match (<40) | `#555555` grey |
-| Apply button | Always `#00d4ff` cyan |
-| Title / Company | `#ffffff` pure white |
-| Location / Source | `#888888` |
-| Match label style | `// STRONG_MATCH`, `// GOOD_MATCH`, `// WEAK_MATCH` |
-| Level badge style | `// FRESHER_MODE`, `// SENIOR_MODE` etc. |
-
----
-
 ## 🤝 Contributing
 
 1. Fork the repo
@@ -391,11 +347,3 @@ The digest email mirrors the dashboard's visual identity exactly:
 
 MIT License — free to fork, modify, and build on top of.
 
----
-
-<div align="center">
-  <p>Built with ⚡ by <strong>Charan</strong></p>
-  <p>
-    <a href="https://jobfeed.site">jobfeed.site</a>
-  </p>
-</div>
