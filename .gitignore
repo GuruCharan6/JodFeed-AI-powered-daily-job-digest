@@ -1,0 +1,30 @@
+# Dependencies
+node_modules/
+
+# Environment variables (NEVER push these)
+.env
+.env.local
+.env.production
+
+# Build output
+dist/
+build/
+.next/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
+
+# Python (if you have a Python backend)
+__pycache__/
+*.pyc
+venv/
+.venv/
+
+# IDE files
+.cursor/
+.vscode/
