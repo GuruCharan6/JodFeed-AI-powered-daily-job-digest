@@ -92,7 +92,7 @@ export default function LandingPage() {
       </nav>
 
       {/* ── HERO ── */}
-      <section style={{ position: 'relative', zIndex: 1, padding: '96px 32px 80px', maxWidth: '1100px', margin: '0 auto' }}
+      <section style={{ position: 'relative', zIndex: 1, padding: '160px 32px 140px', maxWidth: '1100px', margin: '0 auto' }}
         className="animate-fade-in">
         <div style={{ maxWidth: '720px' }}>
           {/* Tag */}
