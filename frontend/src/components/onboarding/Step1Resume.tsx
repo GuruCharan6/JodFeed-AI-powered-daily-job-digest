@@ -40,7 +40,7 @@ function Tag({ children, onRemove }: { children: React.ReactNode; onRemove?: () 
 export default function Step1Resume({ onParsed, parsedData }: Props) {
   const [file, setFile] = useState<File | null>(null)
   const [isDragging, setIsDragging] = useState(false)
-  const [isUploading, setIsUploading] = useState(false)
+  const [_isUploading, setIsUploading] = useState(false)
   const [error, setError] = useState('')
   const [stage, setStage] = useState<'idle' | 'parsing' | 'done' | 'error'>('idle')
   const [stageIdx, setStageIdx] = useState(0)
