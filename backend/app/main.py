@@ -25,7 +25,11 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[settings.frontend_url, "https://jod-feed-ai-powered-daily-job-diges.vercel.app"],
+    allow_origins=[
+        settings.frontend_url, "https://jod-feed-ai-powered-daily-job-diges.vercel.app",
+        "https://jobdigest.site",
+        "https://www.jobdigest.site",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
