@@ -36,12 +36,8 @@ The backend uses Groq (LLaMA 3.3 70B) to score each job against the user's profi
 - **Smart job aggregation** — Collapses user profiles into unique combinations to minimize API calls; deduplicates via MD5 hash; caches jobs for 6–24 hours
 - **AI match scoring** — Groq LLaMA 3.3 70B scores every job 0–100 based on title, skill overlap, location match, and experience-level weighting
 - **Scheduled daily email** — APScheduler ticks every minute; jobs are fetched 5 min ahead of send time and the process sleeps until the user's exact chosen time
-- **Dark-themed HTML email** — Per-job match scores with colored labels (STRONG / GOOD / WEAK) and direct apply links
 - **Interactive dashboard** — View and edit profile sections (skills, roles, locations, companies, experience level, digest time) via modal editors with optimistic updates and rollback on failure
 - **Digest toggle** — Pause or resume email delivery without losing profile configuration
-- **AI insights panel** — Dynamic profile analysis showing match stats, remote opportunity multiplier, and digest status
-- **Authentication** — Email/password + Google OAuth via Supabase Auth, with password reset flow
-- **Liquid glass UI** — Dark theme with glass-morphic cards, animated scroll reveals, and consistent design system across all pages
 
 ---
 
