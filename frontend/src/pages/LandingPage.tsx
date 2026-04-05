@@ -292,18 +292,11 @@ export default function LandingPage() {
       <footer className="border-t border-border py-8 px-4 md:px-6 relative z-10">
         <div className="max-w-[1100px] mx-auto flex flex-col md:flex-row items-center justify-between gap-4">
           <span className="text-sm font-bold tracking-[-0.02em]">
-            <span className="text-primary">Job</span><span className="text-foreground">Feed</span>
+            <span className="text-primary">Job</span><span className="text-foreground">Digest</span>
           </span>
           <span className="text-xs text-muted-foreground">
             © 2026 JobDigest — Daily job intelligence
           </span>
-          <div className="flex gap-6">
-            {['Privacy', 'Terms', 'Contact'].map(l => (
-              <a key={l} href="#" className="text-xs text-muted-foreground no-underline font-medium hover:text-foreground transition-colors cursor-pointer">
-                {l}
-              </a>
-            ))}
-          </div>
         </div>
       </footer>
     </div>
