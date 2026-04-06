@@ -30,7 +30,15 @@ from app.dependencies import get_current_user
 router = APIRouter()
 settings = get_settings()
 
-groq_client = Groq(api_key=settings.groq_api_key)
+# CHANGED: lazy-init Groq client to avoid crash at import time if key is missing
+_groq_client = None
+
+def _get_groq() -> Groq:
+    """Get or create Groq client (lazy initialization)."""
+    global _groq_client
+    if _groq_client is None:
+        _groq_client = Groq(api_key=settings.groq_api_key)
+    return _groq_client
 
 # ── Groq prompt ──────────────────────────────────────────────────
 RESUME_PARSE_PROMPT = """\
@@ -67,17 +75,17 @@ def extract_pdf_text(file_bytes: bytes) -> str:
     """Pull all text out of a PDF. Trims to 6 000 chars for Groq context."""
     try:
         reader = PdfReader(BytesIO(file_bytes))
-        
+
         # Check if PDF is encrypted
         if reader.is_encrypted:
             try:
                 reader.decrypt("")  # Try empty password
             except Exception:
                 raise HTTPException(
-                    status_code=422, 
+                    status_code=422,
                     detail="PDF is password protected. Please upload an unprotected PDF."
                 )
-        
+
         pages = []
         for i, page in enumerate(reader.pages):
             try:
@@ -87,16 +95,16 @@ def extract_pdf_text(file_bytes: bytes) -> str:
             except Exception as e:
                 print(f"[resume] Warning: Failed to extract text from page {i}: {e}")
                 continue
-        
+
         if not pages:
             # Try to detect if it's an image-based PDF
             raise HTTPException(
                 status_code=422,
                 detail="Could not extract text from PDF. The file may be a scanned image or image-based PDF without text layer. Please try a text-based PDF or fill manually."
             )
-        
+
         text = "\n\n".join(pages)
-        
+
         # Additional check for meaningful content
         cleaned_text = re.sub(r'\s+', '', text)
         if len(cleaned_text) < 50:  # Less than 50 non-whitespace chars is probably not a real resume
@@ -104,24 +112,24 @@ def extract_pdf_text(file_bytes: bytes) -> str:
                 status_code=422,
                 detail="PDF contains too little text to be a valid resume. The file may be image-based or corrupted. Please try a different PDF or fill manually."
             )
-        
+
         return text[:6000]
-        
+
     except HTTPException:
         raise
     except Exception as e:
         print(f"[resume] PDF extraction error: {e}")
         print(traceback.format_exc())
         raise HTTPException(
-            status_code=422, 
+            status_code=422,
             detail=f"Could not read PDF: {str(e)}. Ensure the file is a valid, non-corrupted PDF."
         )
 
 
 def clean_groq_response(raw: str) -> str:
     """Clean Groq response to extract valid JSON."""
-    original = raw
-    
+    # CHANGED: removed unused 'original' variable
+
     # Remove markdown code blocks with various formats
     patterns = [
         r'^```json\s*',
@@ -132,10 +140,10 @@ def clean_groq_response(raw: str) -> str:
         r'^\s*',
         r'\s*$',
     ]
-    
+
     for pattern in patterns:
         raw = re.sub(pattern, '', raw, flags=re.MULTILINE)
-    
+
     # Try to find JSON object/array if wrapped in other text
     if not raw.strip().startswith(('{', '[')):
         # Look for JSON object
@@ -147,7 +155,7 @@ def clean_groq_response(raw: str) -> str:
             json_match = re.search(r'(\[.*\])', raw, re.DOTALL)
             if json_match:
                 raw = json_match.group(1)
-    
+
     return raw.strip()
 
 
@@ -160,7 +168,7 @@ def call_groq(resume_text: str) -> dict:
         )
 
     try:
-        resp = groq_client.chat.completions.create(
+        resp = _get_groq().chat.completions.create(  # CHANGED: lazy client
             model="llama-3.3-70b-versatile",
             messages=[
                 {
@@ -181,28 +189,23 @@ def call_groq(resume_text: str) -> dict:
         )
 
         raw = resp.choices[0].message.content.strip()
-        print(f"[resume] Groq raw response: {raw[:500]}...")
 
         # Clean the response
         cleaned = clean_groq_response(raw)
-        print(f"[resume] Cleaned response: {cleaned[:500]}...")
 
         try:
             parsed = json.loads(cleaned)
         except json.JSONDecodeError as e:
-            print(f"[resume] JSON parse error: {e}")
-            print(f"[resume] Full raw response: {original}")
-            
-            # Try one more time with aggressive cleaning
+            # CHANGED: 'original' now refers to 'raw' which is in scope
             try:
                 # Extract anything that looks like JSON
-                aggressive = re.sub(r'^[^{[]*', '', original)
+                aggressive = re.sub(r'^[^{[]*', '', raw)
                 aggressive = re.sub(r'[^}\]]*$', '', aggressive)
                 parsed = json.loads(aggressive)
             except Exception:
                 raise HTTPException(
                     status_code=500,
-                    detail=f"AI returned malformed response. Please try again or fill manually."
+                    detail="AI returned malformed response. Please try again or fill manually."
                 )
 
         # Validate required keys
@@ -210,7 +213,7 @@ def call_groq(resume_text: str) -> dict:
         for key in required_keys:
             if key not in parsed:
                 parsed[key] = [] if key != "full_name" else None
-        
+
         return parsed
 
     except HTTPException:
@@ -273,23 +276,20 @@ async def upload_resume(
     5. Save resume_url + filename to profiles table.
     6. Return parsed data — frontend shows review screen before saving to profile.
     """
-    
-    print(f"[resume] Upload started for user {user.id}, file: {resume.filename}")
 
     try:
         # ── 1. Validate ───────────────────────────────────────────────
         allowed_types = {"application/pdf", "application/octet-stream"}
         content_type = resume.content_type or "application/octet-stream"
-        
+
         # Additional check by filename extension
         filename_lower = (resume.filename or "").lower()
         is_pdf_by_name = filename_lower.endswith('.pdf')
-        
+
         if content_type not in allowed_types and not is_pdf_by_name:
             raise HTTPException(status_code=400, detail="Only PDF files are accepted.")
 
         file_bytes = await resume.read()
-        print(f"[resume] File size: {len(file_bytes)} bytes")
 
         if len(file_bytes) > 5 * 1024 * 1024:
             raise HTTPException(status_code=400, detail="File must be under 5 MB.")
@@ -306,35 +306,32 @@ async def upload_resume(
         # ── 2. Extract text ───────────────────────────────────────────
         try:
             resume_text = extract_pdf_text(file_bytes)
-            print(f"[resume] Extracted {len(resume_text)} characters")
         except HTTPException:
             raise
         except Exception as e:
             print(f"[resume] Unexpected extraction error: {e}")
             print(traceback.format_exc())
             raise HTTPException(
-                status_code=422, 
+                status_code=422,
                 detail="Failed to extract text from PDF. The file may be corrupted or image-based. Please try again or fill manually."
             )
 
         # ── 3. Parse with Groq ────────────────────────────────────────
         try:
             parsed = call_groq(resume_text)
-            print(f"[resume] Parsed successfully: {parsed.get('full_name')}")
         except HTTPException:
             raise
         except Exception as e:
             print(f"[resume] Unexpected Groq error: {e}")
             print(traceback.format_exc())
             raise HTTPException(
-                status_code=500, 
+                status_code=500,
                 detail="Failed to parse resume content. Please try again or fill manually."
             )
 
         # ── 4. Upload to Supabase Storage ─────────────────────────────
         storage_path = upload_pdf(user.id, file_bytes, original_name)
         resume_url = get_signed_url(storage_path) if storage_path else ""
-        print(f"[resume] Storage path: {storage_path}, URL generated: {bool(resume_url)}")
 
         # ── 5. Persist resume metadata to profiles row ────────────────
         if storage_path:
@@ -343,7 +340,6 @@ async def upload_resume(
                     "resume_url": resume_url,
                     "resume_filename": original_name,
                 }).eq("id", user.id).execute()
-                print(f"[resume] Metadata saved to profile")
             except Exception as e:
                 print(f"[resume] Failed to persist resume metadata (non-fatal): {e}")
                 print(traceback.format_exc())
@@ -357,7 +353,7 @@ async def upload_resume(
             "summary": parsed.get("summary", ""),
             "resume_url": resume_url,
         }
-        
+
     except HTTPException:
         raise
     except Exception as e:

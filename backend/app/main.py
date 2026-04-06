@@ -4,8 +4,9 @@ from contextlib import asynccontextmanager
 
 from app.config import get_settings
 from app.routers import profile
-from app.routers import resume          # ← NEW
+from app.routers import resume
 from app.tasks.cron import start_scheduler, shutdown_scheduler
+from app.database import close_async_client, health_check
 
 settings = get_settings()
 
@@ -14,6 +15,8 @@ settings = get_settings()
 async def lifespan(app: FastAPI):
     start_scheduler()
     yield
+    # CHANGED: properly close async client on shutdown
+    await close_async_client()
     shutdown_scheduler()
 
 
@@ -42,8 +45,11 @@ app.include_router(resume.router,  prefix="/profile", tags=["resume"])
 
 
 @app.get("/health")
-def health():
-    return {"status": "ok"}
+async def health():
+    """Health endpoint — checks Supabase connectivity."""
+    db_ok = health_check()
+    return {"status": "ok" if db_ok else "degraded", "database": "connected" if db_ok else "unreachable"}
+
 
 @app.get("/")
 def root():

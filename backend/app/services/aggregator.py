@@ -115,59 +115,83 @@ def _strip_to_db(job: dict) -> dict:
     return {k: v for k, v in job.items() if k in _DB_COLUMNS}
 
 
-# ── Cache check ───────────────────────────────────────────────────────────────
+# ── CHANGED: Batch cache check — single query for ALL combos instead of
+#   one per combo, eliminating N+1 Supabase round-trips ───────────────────────
 
-def _needs_fetch(combo: str) -> bool:
+def _needs_fetch_batch(combos: list[str]) -> list[str]:
     """
-    Returns True only if we actually need to call JSearch.
-    Queries Supabase only — no external API involved.
+    Given all combo keys, return only those that need a fresh fetch.
+    Single DB query instead of one per combo (eliminates N+1).
     """
+    if not combos:
+        return []
+
     try:
         now = datetime.now(timezone.utc)
 
-        # Count non-expired jobs + get most recent scraped_at in one query
-        count_resp = (
+        # Fetch all cached job metadata in one query
+        resp = (
             admin.table("jobs")
-            .select("scraped_at", count="exact")
-            .eq("combo_key", combo)
+            .select("combo_key,scraped_at", count="exact")
+            .in_("combo_key", combos)
             .gt("expires_at", now.isoformat())
-            .order("scraped_at", desc=True)
-            .limit(1)
             .execute()
         )
 
-        count = count_resp.count or 0
+        # Build per-combo stats from single query
+        combo_counts: dict[str, int] = {}
+        combo_latest: dict[str, datetime] = {}
+
+        for row in (resp.data or []):
+            key = row["combo_key"]
+            combo_counts[key] = combo_counts.get(key, 0) + 1
+            ts_str = row["scraped_at"]
+            try:
+                ts = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+                if key not in combo_latest or ts > combo_latest[key]:
+                    combo_latest[key] = ts
+            except (ValueError, TypeError):
+                pass
+
+        # Decide per combo
+    except Exception as e:
+        print(f"    [cache error] batch: {e} — fetching all")
+        list(combos)  # return all
+        return list(combos)
+
+    fetch_list = []
+    for combo in combos:
+        count = combo_counts.get(combo, 0)
 
         if count == 0:
             print(f"    [COLD]   {combo}")
-            return True
+            fetch_list.append(combo)
+            continue
 
         if count < MIN_CACHED_JOBS:
             print(f"    [SPARSE] {combo} — {count} jobs")
-            return True
+            fetch_list.append(combo)
+            continue
 
-        if not count_resp.data:
-            return True
+        latest = combo_latest.get(combo)
+        if latest is None:
+            fetch_list.append(combo)
+            continue
 
-        latest_str = count_resp.data[0]["scraped_at"]
-        latest = datetime.fromisoformat(latest_str.replace("Z", "+00:00"))
         age_h = (now - latest).total_seconds() / 3600
 
         if age_h < CACHE_TTL_H:
             print(f"    [FRESH]  {combo} — {count} jobs, {age_h:.1f}h → SKIP")
-            return False
-
-        if age_h > STALE_TTL_H:
+            # continue (skip fetch)
+        elif age_h > STALE_TTL_H:
             print(f"    [STALE]  {combo} — {age_h:.1f}h → FETCH")
-            return True
+            fetch_list.append(combo)
+        else:
+            # 6–24h with enough jobs → skip
+            print(f"    [WARM]   {combo} — {count} jobs, {age_h:.1f}h → SKIP")
+            # continue (skip fetch)
 
-        # 6–24h with enough jobs → skip
-        print(f"    [WARM]   {combo} — {count} jobs, {age_h:.1f}h → SKIP")
-        return False
-
-    except Exception as e:
-        print(f"    [cache error] {combo}: {e} — fetching anyway")
-        return True
+    return fetch_list
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
@@ -193,16 +217,26 @@ async def run_aggregator(profiles: list[dict] | None = None) -> int:
         return 0
 
     combos = _extract_combos(profiles)
+    combo_keys = [_combo_key(r, l, lv) for r, l, lv in combos]
+
     print(f"\nAggregator: {len(profiles)} profiles → {len(combos)} unique combos\n")
+
+    # CHANGED: batch cache check replaces per-combo N+1 queries
+    stale_combos_keys = _needs_fetch_batch(combo_keys)  # list[str]
+    stale_set = set(stale_combos_keys)
+
+    # Build a lookup from combo_key → (role, location, level) for iteration
+    combo_lookup = {}
+    for role, location, level in combos:
+        key = _combo_key(role, location, level)
+        combo_lookup[key] = (role, location, level)
 
     new_jobs: list[dict] = []
     fetched  = 0
     skipped  = 0
 
-    for role, location, level in combos:
-        combo = _combo_key(role, location, level)
-
-        if not _needs_fetch(combo):
+    for key, (role, location, level) in combo_lookup.items():
+        if key not in stale_set:
             skipped += 1
             continue
 
@@ -214,7 +248,7 @@ async def run_aggregator(profiles: list[dict] | None = None) -> int:
             try:
                 jobs = await fetch_jsearch(q, location, experience_level=level)
                 for j in jobs:
-                    j["combo_key"] = combo   # tag for future cache lookups
+                    j["combo_key"] = key   # tag for future cache lookups
                 new_jobs.extend(jobs)
                 print(f"    + {len(jobs)} jobs from '{q}'")
             except Exception as e:
@@ -260,7 +294,8 @@ async def run_aggregator(profiles: list[dict] | None = None) -> int:
         ).execute()
         print(f"  saved to DB    : {len(db_rows)}\n")
     except Exception as e:
-        print(f"  DB error: {e}\n")
+        # CHANGED: log how many rows were attempted
+        print(f"  DB upsert error ({len(db_rows)} rows attempted): {e}\n")
         return 0
 
     return len(clean)

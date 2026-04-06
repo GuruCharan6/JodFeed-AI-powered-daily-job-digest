@@ -46,9 +46,10 @@ def _resolve_years(profile: dict) -> float:
     yoe = profile.get("years_of_experience")
     if yoe is not None:
         return float(yoe)
+    # CHANGED: differentiate fresher fallback from default
     if profile.get("is_fresher"):
         return 0.0
-    return 0.0
+    return 1.0  # assume junior if no data available
 
 
 # ── Schema ────────────────────────────────────────────────────────────────────
@@ -102,7 +103,16 @@ def get_profile(user=Depends(get_current_user)):
     years   = _resolve_years(profile)
     derived = _derive(years)
     profile.update(derived)
-    admin.table("profiles").update(derived).eq("id", user.id).execute()
+
+    # CHANGED: only write back if there's actually a drift — avoids unnecessary
+    # DB write on every single GET request.
+    needs_sync = (
+        profile.get("years_of_experience") != derived["years_of_experience"]
+        or profile.get("is_fresher") != derived["is_fresher"]
+        or profile.get("experience_level") != derived["experience_level"]
+    )
+    if needs_sync:
+        admin.table("profiles").update(derived).eq("id", user.id).execute()
 
     return profile
 

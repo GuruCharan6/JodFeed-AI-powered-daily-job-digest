@@ -14,6 +14,8 @@ import resend
 import asyncio
 from app.config import get_settings
 
+# CHANGED: track whether api_key has been set to avoid reassignment
+_resend_key_set = False
 
 def _h(v: str) -> str:
     return html_lib.escape(str(v or ""))
@@ -267,7 +269,12 @@ async def send_digest(
         print(f"Email skipped: no jobs for {to_email}")
         return False
 
-    resend.api_key = settings.resend_api_key
+    # CHANGED: set api_key once at module level instead of on every call
+    global _resend_key_set
+    if not _resend_key_set:
+        resend.api_key = settings.resend_api_key
+        _resend_key_set = True
+
     html    = build_email_html(name, jobs, years_of_experience)
     level   = _level_label(years_of_experience)
     subject = (

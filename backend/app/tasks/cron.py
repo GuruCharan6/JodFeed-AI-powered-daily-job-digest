@@ -38,6 +38,9 @@ scheduler = AsyncIOScheduler(timezone="Asia/Kolkata")
 # Track in-progress pipelines to avoid double-triggering
 _active_pipelines: set[str] = set()   # keyed by "email|HH:MM"
 
+# CHANGED: module-level reference to current admin for retry reconnection
+_admin_ref = admin
+
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -61,6 +64,9 @@ def _normalize_pref(pref) -> list[str]:
 
 def _execute_with_retry(table_op, max_retries=3):
     """Execute Supabase operation with retry + reconnect on transient errors."""
+    # CHANGED: use module-level _admin_ref so other modules see the reconnect
+    global _admin_ref
+
     for attempt in range(max_retries):
         try:
             return table_op.execute()
@@ -70,8 +76,7 @@ def _execute_with_retry(table_op, max_retries=3):
                 print(f"DB connection error (attempt {attempt + 1}/{max_retries}): {e}")
                 if attempt < max_retries - 1:
                     time.sleep(1 * (attempt + 1))
-                    global admin
-                    admin = get_admin_client()
+                    _admin_ref = get_admin_client()
                     continue
             raise
     return None
@@ -204,9 +209,8 @@ async def _send_for_user(profile: dict, all_jobs: list[dict]):
             text = ((j.get("title") or "") + " " + (j.get("description") or "")).lower()
             if any(kw in text for kw in senior_kw):
                 continue
-            if any(kw in text for kw in fresher_kw):
-                j["fresher_boost"] = True
             fresher_filtered.append(j)
+        # CHANGED: remove dead assignment — fresher_boost was never read elsewhere
 
         if len(fresher_filtered) >= 5:
             filtered = fresher_filtered
@@ -219,10 +223,10 @@ async def _send_for_user(profile: dict, all_jobs: list[dict]):
 
     # ── Fresher injection ─────────────────────────────────────────────────────
     if is_fresher and top_jobs:
-        entry_count = sum(1 for j in top_jobs if j.get("is_entry_level") or j.get("fresher_boost"))
+        entry_count = sum(1 for j in top_jobs if j.get("fresher_boost"))
         if entry_count == 0:
             entry_jobs = sorted(
-                [j for j in filtered if j.get("is_entry_level") or j.get("fresher_boost")],
+                [j for j in filtered if j.get("fresher_boost")],
                 key=lambda x: x.get("score", 50), reverse=True
             )
             if entry_jobs:
@@ -230,6 +234,9 @@ async def _send_for_user(profile: dict, all_jobs: list[dict]):
                 print(f"[cron] Injected {min(3, len(entry_jobs))} entry-level jobs for {user_email}")
 
     # ── Send ──────────────────────────────────────────────────────────────────
+    start_time = profile.get("_pipeline_start", datetime.now(TIMEZONE))
+    duration = int((datetime.now(TIMEZONE) - start_time).total_seconds())
+
     success = await send_digest(
         to_email=user_email,
         name=profile.get("full_name", ""),
@@ -239,7 +246,7 @@ async def _send_for_user(profile: dict, all_jobs: list[dict]):
 
     status = "sent" if success else "failed"
     _execute_with_retry(
-        admin.table("digest_logs").insert({
+        _admin_ref.table("digest_logs").insert({
             "user_id":          user_id,
             "user_email":       user_email,
             "jobs_sent":        len(top_jobs),
@@ -249,7 +256,7 @@ async def _send_for_user(profile: dict, all_jobs: list[dict]):
             "experience_level": exp_level,
             "is_fresher":       is_fresher,
             "roles_searched":   user_roles,
-            "duration_seconds": int((datetime.now(TIMEZONE) - profile.get("_pipeline_start", datetime.now(TIMEZONE))).total_seconds()),
+            "duration_seconds": duration,
         })
     )
     print(f"[cron] Digest {status} -> {user_email} ({len(top_jobs)} jobs, {exp_level})")
@@ -284,7 +291,7 @@ async def _scheduled_send(profile: dict, all_jobs: list[dict]):
         print(traceback.format_exc())
         try:
             _execute_with_retry(
-                admin.table("digest_logs").insert({
+                _admin_ref.table("digest_logs").insert({
                     "user_id":    str(profile.get("id", "")),
                     "user_email": str(profile.get("email", "")),
                     "jobs_sent":  0,
@@ -310,9 +317,10 @@ async def daily_pipeline():
 
     # 1. Load active profiles
     try:
-        users_resp   = _execute_with_retry(
-            admin.table("profiles")
-            .select("*")
+        # CHANGED: select only needed columns instead of select("*")
+        users_resp = _execute_with_retry(
+            _admin_ref.table("profiles")
+            .select("id,email,full_name,target_roles,locations,location,remote,company_pref,years_of_experience,digest_time,onboarding_complete,digest_enabled")
             .eq("onboarding_complete", True)
             .eq("digest_enabled",      True)
         )
@@ -348,13 +356,22 @@ async def daily_pipeline():
 
     # 4. Load aggregated jobs from DB once (shared across all due users)
     try:
-        jobs_resp = _execute_with_retry(admin.table("jobs").select("*"))
+        # CHANGED: select only columns needed by scorer/mailer
+        jobs_resp = _execute_with_retry(
+            _admin_ref.table("jobs")
+            .select("id,title,company,location,description,apply_url,source,company_type,is_entry_level")
+        )
         all_jobs  = jobs_resp.data or [] if jobs_resp else []
     except Exception as e:
         print(f"[cron] Failed to load jobs: {e}")
         for p in due_profiles:
             _active_pipelines.discard(p.get("_pipeline_key", ""))
         return
+
+    # CHANGED: set is_entry_level from fresher_boost for scorer compatibility
+    for j in all_jobs:
+        if j.get("is_entry_level") is None:
+            j["is_entry_level"] = False
 
     print(f"[cron] Loaded {len(all_jobs)} jobs — sleeping until scheduled send times")
 

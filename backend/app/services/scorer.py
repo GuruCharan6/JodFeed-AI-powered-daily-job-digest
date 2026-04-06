@@ -114,7 +114,8 @@ def _fetch_jobs_for_user(profile: dict) -> list[dict]:
         # Supabase .in_() filter — one query for all combos
         resp = (
             admin.table("jobs")
-            .select("id,title,company,location,description,apply_url,source,is_entry_level")
+            # CHANGED: select only columns scorer actually uses
+            .select("id,title,company,location,description,apply_url,source")
             .in_("combo_key", keys)
             .gt("expires_at", now)
             .limit(150)   # generous pool for scorer to work with
