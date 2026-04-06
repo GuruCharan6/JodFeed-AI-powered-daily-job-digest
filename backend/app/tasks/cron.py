@@ -357,9 +357,11 @@ async def daily_pipeline():
     # 4. Load aggregated jobs from DB once (shared across all due users)
     try:
         # CHANGED: select only columns needed by scorer/mailer
+        # FIXED: removed is_entry_level from select — this column does not exist in the DB
+        # (_is_entry_level in jsearch.py is in-memory only, stripped by aggregator before DB write)
         jobs_resp = _execute_with_retry(
             _admin_ref.table("jobs")
-            .select("id,title,company,location,description,apply_url,source,company_type,is_entry_level")
+            .select("id,title,company,location,description,apply_url,source,company_type")
         )
         all_jobs  = jobs_resp.data or [] if jobs_resp else []
     except Exception as e:
@@ -368,10 +370,12 @@ async def daily_pipeline():
             _active_pipelines.discard(p.get("_pipeline_key", ""))
         return
 
-    # CHANGED: set is_entry_level from fresher_boost for scorer compatibility
+    # CHANGED: compute is_entry_level in-memory from title/description
+    # (was previously requested as DB column that didn't exist, causing 42703 error)
+    _ENTRY_KW = ["entry level", "entry-level", "fresher", "graduate", "junior", "jr ", "trainee", "intern"]
     for j in all_jobs:
-        if j.get("is_entry_level") is None:
-            j["is_entry_level"] = False
+        text = ((j.get("title") or "") + " " + (j.get("description") or "")).lower()
+        j["is_entry_level"] = any(kw in text for kw in _ENTRY_KW)
 
     print(f"[cron] Loaded {len(all_jobs)} jobs — sleeping until scheduled send times")
 
